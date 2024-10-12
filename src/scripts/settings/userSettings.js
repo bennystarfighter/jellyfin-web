@@ -142,7 +142,7 @@ export class UserSettings {
         }
 
         // Enable it by default only for the platforms that play fMP4 for sure.
-        return toBoolean(this.get('preferFmp4HlsContainer', false), browser.safari || browser.firefox || (browser.chrome && !browser.web0s && !browser.tizen) || browser.edgeChromium);
+        return toBoolean(this.get('preferFmp4HlsContainer', false), browser.safari || browser.firefox || browser.chrome || browser.edgeChromium);
     }
 
     /**
@@ -432,6 +432,19 @@ export class UserSettings {
     }
 
     /**
+     * Get or set the amount of time it takes to activate the screensaver in seconds. Default 3 minutes.
+     * @param {number|undefined} [val] - The amount of time it takes to activate the screensaver in seconds.
+     * @return {number} The amount of time it takes to activate the screensaver in seconds.
+     */
+    screensaverTime(val) {
+        if (val !== undefined) {
+            return this.set('screensaverTime', val.toString(), false);
+        }
+
+        return parseInt(this.get('screensaverTime', false), 10) || 180;
+    }
+
+    /**
      * Get or set library page size.
      * @param {number|undefined} [val] - Library page size.
      * @return {number} Library page size.
@@ -523,16 +536,7 @@ export class UserSettings {
      * @param {Object} query - Query.
      */
     saveQuerySettings(key, query) {
-        const values = {};
-        if (query.SortBy) {
-            values.SortBy = query.SortBy;
-        }
-
-        if (query.SortOrder) {
-            values.SortOrder = query.SortOrder;
-        }
-
-        return this.set(key, JSON.stringify(values));
+        return this.set(key, JSON.stringify(query));
     }
 
     /**
@@ -659,6 +663,7 @@ export const skin = currentSettings.skin.bind(currentSettings);
 export const theme = currentSettings.theme.bind(currentSettings);
 export const screensaver = currentSettings.screensaver.bind(currentSettings);
 export const backdropScreensaverInterval = currentSettings.backdropScreensaverInterval.bind(currentSettings);
+export const screensaverTime = currentSettings.screensaverTime.bind(currentSettings);
 export const libraryPageSize = currentSettings.libraryPageSize.bind(currentSettings);
 export const maxDaysForNextUp = currentSettings.maxDaysForNextUp.bind(currentSettings);
 export const enableRewatchingInNextUp = currentSettings.enableRewatchingInNextUp.bind(currentSettings);

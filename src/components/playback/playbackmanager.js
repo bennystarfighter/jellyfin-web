@@ -1,4 +1,5 @@
 import { PlaybackErrorCode } from '@jellyfin/sdk/lib/generated-client/models/playback-error-code.js';
+import { getMediaInfoApi } from '@jellyfin/sdk/lib/utils/api/media-info-api';
 import merge from 'lodash-es/merge';
 import Screenfull from 'screenfull';
 
@@ -9,7 +10,7 @@ import itemHelper from '../itemHelper';
 import { pluginManager } from '../pluginManager';
 import PlayQueueManager from './playqueuemanager';
 import * as userSettings from '../../scripts/settings/userSettings';
-import globalize from '../../scripts/globalize';
+import globalize from '../../lib/globalize';
 import loading from '../loading/loading';
 import { appHost } from '../apphost';
 import ServerConnections from '../ServerConnections';
@@ -22,6 +23,8 @@ import { MediaType } from '@jellyfin/sdk/lib/generated-client/models/media-type'
 
 import { MediaError } from 'types/mediaError';
 import { getMediaError } from 'utils/mediaError';
+import { toApi } from 'utils/jellyfin-apiclient/compat';
+import { BaseItemKind } from '@jellyfin/sdk/lib/generated-client/models/base-item-kind.js';
 
 const UNLIMITED_ITEMS = -1;
 
@@ -309,7 +312,8 @@ function getAudioStreamUrl(item, transcodingProfile, directPlayContainers, apiCl
         PlaySessionId: startingPlaySession,
         StartTimeTicks: startPosition || 0,
         EnableRedirection: true,
-        EnableRemoteMedia: appHost.supports('remoteaudio')
+        EnableRemoteMedia: appHost.supports('remoteaudio'),
+        EnableAudioVbrEncoding: transcodingProfile.EnableAudioVbrEncoding
     });
 }
 
@@ -400,9 +404,9 @@ function setStreamUrls(items, deviceProfile, maxBitrate, apiClient, startPositio
     });
 }
 
-function getPlaybackInfo(player, apiClient, item, deviceProfile, mediaSourceId, liveStreamId, options) {
+async function getPlaybackInfo(player, apiClient, item, deviceProfile, mediaSourceId, liveStreamId, options) {
     if (!itemHelper.isLocalItem(item) && item.MediaType === 'Audio' && !player.useServerPlaybackInfoForAudio) {
-        return Promise.resolve({
+        return {
             MediaSources: [
                 {
                     StreamUrl: getAudioStreamUrlFromDeviceProfile(item, deviceProfile, options.maxBitrate, apiClient, options.startPosition),
@@ -410,13 +414,13 @@ function getPlaybackInfo(player, apiClient, item, deviceProfile, mediaSourceId, 
                     MediaStreams: [],
                     RunTimeTicks: item.RunTimeTicks
                 }]
-        });
+        };
     }
 
     if (item.PresetMediaSource) {
-        return Promise.resolve({
+        return {
             MediaSources: [item.PresetMediaSource]
-        });
+        };
     }
 
     const itemId = item.Id;
@@ -425,6 +429,9 @@ function getPlaybackInfo(player, apiClient, item, deviceProfile, mediaSourceId, 
         UserId: apiClient.getCurrentUserId(),
         StartTimeTicks: options.startPosition || 0
     };
+
+    const api = toApi(apiClient);
+    const mediaInfoApi = getMediaInfoApi(api);
 
     if (options.isPlayback) {
         query.IsPlayback = true;
@@ -479,7 +486,12 @@ function getPlaybackInfo(player, apiClient, item, deviceProfile, mediaSourceId, 
         query.DirectPlayProtocols = player.getDirectPlayProtocols();
     }
 
-    return apiClient.getPlaybackInfo(itemId, query, deviceProfile);
+    query.AlwaysBurnInSubtitleWhenTranscoding = appSettings.alwaysBurnInSubtitleWhenTranscoding();
+
+    query.DeviceProfile = deviceProfile;
+
+    const res = await mediaInfoApi.getPostedPlaybackInfo({ itemId: itemId, playbackInfoDto: query });
+    return res.data;
 }
 
 function getOptimalMediaSource(apiClient, item, versions) {
@@ -686,7 +698,7 @@ function sortPlayerTargets(a, b) {
     return aVal.localeCompare(bVal);
 }
 
-class PlaybackManager {
+export class PlaybackManager {
     constructor() {
         const self = this;
 
@@ -1862,6 +1874,15 @@ class PlaybackManager {
                         SortBy: options.shuffle ? 'Random' : 'SortName',
                         MediaTypes: 'Audio'
                     }, queryOptions));
+                case 'Genre':
+                    return getItemsForPlayback(serverId, mergePlaybackQueries({
+                        GenreIds: firstItem.Id,
+                        ParentId: firstItem.ParentId,
+                        Filters: 'IsNotFolder',
+                        Recursive: true,
+                        SortBy: options.shuffle ? 'Random' : 'SortName',
+                        MediaTypes: 'Video'
+                    }, queryOptions));
                 case 'Series':
                 case 'Season':
                     return getSeriesOrSeasonPlaybackPromise(firstItem, options, items);
@@ -1947,7 +1968,7 @@ class PlaybackManager {
                 episodesResult.StartIndex = undefined;
                 let seasonStartIndex;
                 for (const [index, e] of episodesResult.Items.entries()) {
-                    if (startSeasonId) {
+                    if (startSeasonId && items.length != 1) {
                         if (e.SeasonId == startSeasonId) {
                             if (seasonStartIndex === undefined) {
                                 seasonStartIndex = index;
@@ -2397,20 +2418,20 @@ class PlaybackManager {
             });
         }
 
-        function rankStreamType(prevIndex, prevSource, mediaSource, streamType, isSecondarySubtitle) {
+        function rankStreamType(prevIndex, prevSource, mediaStreams, trackOptions, streamType, isSecondarySubtitle) {
             if (prevIndex == -1) {
                 console.debug(`AutoSet ${streamType} - No Stream Set`);
                 if (streamType == 'Subtitle') {
                     if (isSecondarySubtitle) {
-                        mediaSource.DefaultSecondarySubtitleStreamIndex = -1;
+                        trackOptions.DefaultSecondarySubtitleStreamIndex = -1;
                     } else {
-                        mediaSource.DefaultSubtitleStreamIndex = -1;
+                        trackOptions.DefaultSubtitleStreamIndex = -1;
                     }
                 }
                 return;
             }
 
-            if (!prevSource.MediaStreams || !mediaSource.MediaStreams) {
+            if (!prevSource.MediaStreams || !mediaStreams) {
                 console.debug(`AutoSet ${streamType} - No MediaStreams`);
                 return;
             }
@@ -2436,7 +2457,7 @@ class PlaybackManager {
             }
 
             let newRelIndex = 0;
-            for (const stream of mediaSource.MediaStreams) {
+            for (const stream of mediaStreams) {
                 if (stream.Type != streamType) continue;
 
                 let score = 0;
@@ -2459,38 +2480,38 @@ class PlaybackManager {
                 console.debug(`AutoSet ${streamType} - Using ${bestStreamIndex} score ${bestStreamScore}.`);
                 if (streamType == 'Subtitle') {
                     if (isSecondarySubtitle) {
-                        mediaSource.DefaultSecondarySubtitleStreamIndex = bestStreamIndex;
+                        trackOptions.DefaultSecondarySubtitleStreamIndex = bestStreamIndex;
                     } else {
-                        mediaSource.DefaultSubtitleStreamIndex = bestStreamIndex;
+                        trackOptions.DefaultSubtitleStreamIndex = bestStreamIndex;
                     }
                 }
                 if (streamType == 'Audio') {
-                    mediaSource.DefaultAudioStreamIndex = bestStreamIndex;
+                    trackOptions.DefaultAudioStreamIndex = bestStreamIndex;
                 }
             } else {
                 console.debug(`AutoSet ${streamType} - Threshold not met. Using default.`);
             }
         }
 
-        function autoSetNextTracks(prevSource, mediaSource, audio, subtitle) {
+        function autoSetNextTracks(prevSource, mediaStreams, trackOptions, audio, subtitle) {
             try {
                 if (!prevSource) return;
 
-                if (!mediaSource) {
-                    console.warn('AutoSet - No mediaSource');
+                if (!mediaStreams) {
+                    console.warn('AutoSet - No mediaStreams');
                     return;
                 }
 
                 if (audio && typeof prevSource.DefaultAudioStreamIndex == 'number') {
-                    rankStreamType(prevSource.DefaultAudioStreamIndex, prevSource, mediaSource, 'Audio');
+                    rankStreamType(prevSource.DefaultAudioStreamIndex, prevSource, mediaStreams, trackOptions, 'Audio');
                 }
 
                 if (subtitle && typeof prevSource.DefaultSubtitleStreamIndex == 'number') {
-                    rankStreamType(prevSource.DefaultSubtitleStreamIndex, prevSource, mediaSource, 'Subtitle');
+                    rankStreamType(prevSource.DefaultSubtitleStreamIndex, prevSource, mediaStreams, trackOptions, 'Subtitle');
                 }
 
                 if (subtitle && typeof prevSource.DefaultSecondarySubtitleStreamIndex == 'number') {
-                    rankStreamType(prevSource.DefaultSecondarySubtitleStreamIndex, prevSource, mediaSource, 'Subtitle', true);
+                    rankStreamType(prevSource.DefaultSecondarySubtitleStreamIndex, prevSource, mediaStreams, trackOptions, 'Subtitle', true);
                 }
             } catch (e) {
                 console.error(`AutoSet - Caught unexpected error: ${e}`);
@@ -2562,12 +2583,25 @@ class PlaybackManager {
                 });
             }
 
-            return Promise.all([promise, player.getDeviceProfile(item)]).then(function (responses) {
+            const apiClient = ServerConnections.getApiClient(item.ServerId);
+            let mediaSourceId;
+
+            const isLiveTv = [BaseItemKind.TvChannel, BaseItemKind.LiveTvChannel].includes(item.Type);
+
+            if (!isLiveTv) {
+                mediaSourceId = playOptions.mediaSourceId || item.Id;
+            }
+
+            const getMediaStreams = isLiveTv ? Promise.resolve([]) : apiClient.getItem(apiClient.getCurrentUserId(), mediaSourceId)
+                .then(fullItem => {
+                    return fullItem.MediaStreams;
+                });
+
+            return Promise.all([promise, player.getDeviceProfile(item), apiClient.getCurrentUser(), getMediaStreams]).then(function (responses) {
                 const deviceProfile = responses[1];
+                const user = responses[2];
+                const mediaStreams = responses[3];
 
-                const apiClient = ServerConnections.getApiClient(item.ServerId);
-
-                const mediaSourceId = playOptions.mediaSourceId;
                 const audioStreamIndex = playOptions.audioStreamIndex;
                 const subtitleStreamIndex = playOptions.subtitleStreamIndex;
                 const options = {
@@ -2590,9 +2624,20 @@ class PlaybackManager {
                 // this reference was only needed by sendPlaybackListToPlayer
                 playOptions.items = null;
 
+                const trackOptions = {};
+
+                autoSetNextTracks(prevSource, mediaStreams, trackOptions, user.Configuration.RememberAudioSelections, user.Configuration.RememberSubtitleSelections);
+                if (trackOptions.DefaultAudioStreamIndex != null) {
+                    options.audioStreamIndex = trackOptions.DefaultAudioStreamIndex;
+                }
+                if (trackOptions.DefaultSubtitleStreamIndex != null) {
+                    options.subtitleStreamIndex = trackOptions.DefaultSubtitleStreamIndex;
+                }
+
                 return getPlaybackMediaSource(player, apiClient, deviceProfile, item, mediaSourceId, options).then(async (mediaSource) => {
-                    const user = await apiClient.getCurrentUser();
-                    autoSetNextTracks(prevSource, mediaSource, user.Configuration.RememberAudioSelections, user.Configuration.RememberSubtitleSelections);
+                    if (trackOptions.DefaultSecondarySubtitleStreamIndex != null) {
+                        mediaSource.DefaultSecondarySubtitleStreamIndex = trackOptions.DefaultSecondarySubtitleStreamIndex;
+                    }
 
                     if (mediaSource.DefaultSubtitleStreamIndex == null || mediaSource.DefaultSubtitleStreamIndex < 0) {
                         mediaSource.DefaultSubtitleStreamIndex = mediaSource.DefaultSecondarySubtitleStreamIndex;
