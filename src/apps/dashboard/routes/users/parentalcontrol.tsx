@@ -1,11 +1,11 @@
 import type { AccessSchedule, ParentalRating, UserDto } from '@jellyfin/sdk/lib/generated-client';
-import { UnratedItem } from '@jellyfin/sdk/lib/generated-client/models/unrated-item';
 import { DynamicDayOfWeek } from '@jellyfin/sdk/lib/generated-client/models/dynamic-day-of-week';
 import escapeHTML from 'escape-html';
-import React, { useCallback, useEffect, useState, useRef, useMemo } from 'react';
+import React, { FunctionComponent, useCallback, useEffect, useState, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 
-import globalize from '../../../../lib/globalize';
+import globalize from '../../../../scripts/globalize';
+import LibraryMenu from '../../../../scripts/libraryMenu';
 import AccessScheduleList from '../../../../components/dashboard/users/AccessScheduleList';
 import TagList from '../../../../components/dashboard/users/TagList';
 import ButtonElement from '../../../../elements/ButtonElement';
@@ -19,12 +19,9 @@ import Page from '../../../../components/Page';
 import prompt from '../../../../components/prompt/prompt';
 import ServerConnections from 'components/ServerConnections';
 
-type NamedItem = {
+type UnratedItem = {
     name: string;
-    value: UnratedItem;
-};
-
-type UnratedNamedItem = NamedItem & {
+    value: string;
     checkedAttribute: string
 };
 
@@ -59,20 +56,19 @@ function handleSaveUser(
     };
 }
 
-const UserParentalControl = () => {
+const UserParentalControl: FunctionComponent = () => {
     const [ searchParams ] = useSearchParams();
     const userId = searchParams.get('userId');
     const [ userName, setUserName ] = useState('');
     const [ parentalRatings, setParentalRatings ] = useState<ParentalRating[]>([]);
-    const [ unratedItems, setUnratedItems ] = useState<UnratedNamedItem[]>([]);
+    const [ unratedItems, setUnratedItems ] = useState<UnratedItem[]>([]);
     const [ accessSchedules, setAccessSchedules ] = useState<AccessSchedule[]>([]);
     const [ allowedTags, setAllowedTags ] = useState<string[]>([]);
     const [ blockedTags, setBlockedTags ] = useState<string[]>([]);
-    const libraryMenu = useMemo(async () => ((await import('../../../../scripts/libraryMenu')).default), []);
 
     const element = useRef<HTMLDivElement>(null);
 
-    const populateRatings = useCallback((allParentalRatings: ParentalRating[]) => {
+    const populateRatings = useCallback((allParentalRatings) => {
         let rating;
         const ratings: ParentalRating[] = [];
 
@@ -97,7 +93,7 @@ const UserParentalControl = () => {
         setParentalRatings(ratings);
     }, []);
 
-    const loadUnratedItems = useCallback((user: UserDto) => {
+    const loadUnratedItems = useCallback((user) => {
         const page = element.current;
 
         if (!page) {
@@ -105,45 +101,109 @@ const UserParentalControl = () => {
             return;
         }
 
-        const items: NamedItem[] = [{
+        const items = [{
             name: globalize.translate('Books'),
-            value: UnratedItem.Book
+            value: 'Book'
         }, {
             name: globalize.translate('Channels'),
-            value: UnratedItem.ChannelContent
+            value: 'ChannelContent'
         }, {
             name: globalize.translate('LiveTV'),
-            value: UnratedItem.LiveTvChannel
+            value: 'LiveTvChannel'
         }, {
             name: globalize.translate('Movies'),
-            value: UnratedItem.Movie
+            value: 'Movie'
         }, {
             name: globalize.translate('Music'),
-            value: UnratedItem.Music
+            value: 'Music'
         }, {
             name: globalize.translate('Trailers'),
-            value: UnratedItem.Trailer
+            value: 'Trailer'
         }, {
             name: globalize.translate('Shows'),
-            value: UnratedItem.Series
+            value: 'Series'
         }];
 
-        const unratedNamedItem: UnratedNamedItem[] = [];
+        const itemsArr: UnratedItem[] = [];
 
         for (const item of items) {
-            const isChecked = user.Policy?.BlockUnratedItems?.indexOf(item.value) != -1;
+            const isChecked = user.Policy.BlockUnratedItems.indexOf(item.value) != -1;
             const checkedAttribute = isChecked ? ' checked="checked"' : '';
-            unratedNamedItem.push({
+            itemsArr.push({
                 value: item.value,
                 name: item.name,
                 checkedAttribute: checkedAttribute
             });
         }
 
-        setUnratedItems(unratedNamedItem);
+        setUnratedItems(itemsArr);
 
         const blockUnratedItems = page.querySelector('.blockUnratedItems') as HTMLDivElement;
         blockUnratedItems.dispatchEvent(new CustomEvent('create'));
+    }, []);
+
+    const loadAllowedTags = useCallback((tags: string[]) => {
+        const page = element.current;
+
+        if (!page) {
+            console.error('[userparentalcontrol] Unexpected null page reference');
+            return;
+        }
+
+        setAllowedTags(tags);
+
+        const allowedTagsElem = page.querySelector('.allowedTags') as HTMLDivElement;
+
+        for (const btnDeleteTag of allowedTagsElem.querySelectorAll('.btnDeleteTag')) {
+            btnDeleteTag.addEventListener('click', function () {
+                const tag = btnDeleteTag.getAttribute('data-tag');
+                const newTags = tags.filter(t => t !== tag);
+                loadAllowedTags(newTags);
+            });
+        }
+    }, []);
+
+    const loadBlockedTags = useCallback((tags: string[]) => {
+        const page = element.current;
+
+        if (!page) {
+            console.error('[userparentalcontrol] Unexpected null page reference');
+            return;
+        }
+
+        setBlockedTags(tags);
+
+        const blockedTagsElem = page.querySelector('.blockedTags') as HTMLDivElement;
+
+        for (const btnDeleteTag of blockedTagsElem.querySelectorAll('.btnDeleteTag')) {
+            btnDeleteTag.addEventListener('click', function () {
+                const tag = btnDeleteTag.getAttribute('data-tag');
+                const newTags = tags.filter(t => t !== tag);
+                loadBlockedTags(newTags);
+            });
+        }
+    }, []);
+
+    const renderAccessSchedule = useCallback((schedules) => {
+        const page = element.current;
+
+        if (!page) {
+            console.error('[userparentalcontrol] Unexpected null page reference');
+            return;
+        }
+
+        setAccessSchedules(schedules);
+
+        const accessScheduleList = page.querySelector('.accessScheduleList') as HTMLDivElement;
+
+        for (const btnDelete of accessScheduleList.querySelectorAll('.btnDelete')) {
+            btnDelete.addEventListener('click', function () {
+                const index = parseInt(btnDelete.getAttribute('data-index') ?? '0', 10);
+                schedules.splice(index, 1);
+                const newindex = schedules.filter((i: number) => i != index);
+                renderAccessSchedule(newindex);
+            });
+        }
     }, []);
 
     const loadUser = useCallback((user: UserDto, allParentalRatings: ParentalRating[]) => {
@@ -155,11 +215,11 @@ const UserParentalControl = () => {
         }
 
         setUserName(user.Name || '');
-        void libraryMenu.then(menu => menu.setTitle(user.Name));
+        LibraryMenu.setTitle(user.Name);
         loadUnratedItems(user);
 
-        setAllowedTags(user.Policy?.AllowedTags || []);
-        setBlockedTags(user.Policy?.BlockedTags || []);
+        loadAllowedTags(user.Policy?.AllowedTags || []);
+        loadBlockedTags(user.Policy?.BlockedTags || []);
         populateRatings(allParentalRatings);
 
         let ratingValue = '';
@@ -171,16 +231,16 @@ const UserParentalControl = () => {
             });
         }
 
-        (page.querySelector('#selectMaxParentalRating') as HTMLSelectElement).value = String(ratingValue);
+        (page.querySelector('#selectMaxParentalRating') as HTMLSelectElement).value = ratingValue;
 
         if (user.Policy?.IsAdministrator) {
             (page.querySelector('.accessScheduleSection') as HTMLDivElement).classList.add('hide');
         } else {
             (page.querySelector('.accessScheduleSection') as HTMLDivElement).classList.remove('hide');
         }
-        setAccessSchedules(user.Policy?.AccessSchedules || []);
+        renderAccessSchedule(user.Policy?.AccessSchedules || []);
         loading.hide();
-    }, [libraryMenu, setAllowedTags, setBlockedTags, loadUnratedItems, populateRatings]);
+    }, [loadAllowedTags, loadBlockedTags, loadUnratedItems, populateRatings, renderAccessSchedule]);
 
     const loadData = useCallback(() => {
         if (!userId) {
@@ -221,7 +281,7 @@ const UserParentalControl = () => {
                     }
 
                     schedules[index] = updatedSchedule;
-                    setAccessSchedules(schedules);
+                    renderAccessSchedule(schedules);
                 }).catch(() => {
                     // access schedule closed
                 });
@@ -254,7 +314,7 @@ const UserParentalControl = () => {
 
                 if (tags.indexOf(value) == -1) {
                     tags.push(value);
-                    setAllowedTags(tags);
+                    loadAllowedTags(tags);
                 }
             }).catch(() => {
                 // prompt closed
@@ -275,7 +335,7 @@ const UserParentalControl = () => {
 
                 if (tags.indexOf(value) == -1) {
                     tags.push(value);
-                    setBlockedTags(tags);
+                    loadBlockedTags(tags);
                 }
             }).catch(() => {
                 // prompt closed
@@ -306,8 +366,7 @@ const UserParentalControl = () => {
             return false;
         };
 
-        // The following is still hacky and should migrate to pure react implementation for callbacks in the future
-        const accessSchedulesPopupCallback = function () {
+        (page.querySelector('#btnAddSchedule') as HTMLButtonElement).addEventListener('click', function () {
             showSchedulePopup({
                 Id: 0,
                 UserId: '',
@@ -315,19 +374,18 @@ const UserParentalControl = () => {
                 StartHour: 0,
                 EndHour: 0
             }, -1);
-        };
-        (page.querySelector('#btnAddSchedule') as HTMLButtonElement).addEventListener('click', accessSchedulesPopupCallback);
-        (page.querySelector('#btnAddAllowedTag') as HTMLButtonElement).addEventListener('click', showAllowedTagPopup);
-        (page.querySelector('#btnAddBlockedTag') as HTMLButtonElement).addEventListener('click', showBlockedTagPopup);
-        (page.querySelector('.userParentalControlForm') as HTMLFormElement).addEventListener('submit', onSubmit);
+        });
 
-        return () => {
-            (page.querySelector('#btnAddSchedule') as HTMLButtonElement).removeEventListener('click', accessSchedulesPopupCallback);
-            (page.querySelector('#btnAddAllowedTag') as HTMLButtonElement).removeEventListener('click', showAllowedTagPopup);
-            (page.querySelector('#btnAddBlockedTag') as HTMLButtonElement).removeEventListener('click', showBlockedTagPopup);
-            (page.querySelector('.userParentalControlForm') as HTMLFormElement).removeEventListener('submit', onSubmit);
-        };
-    }, [setAllowedTags, setBlockedTags, loadData, userId]);
+        (page.querySelector('#btnAddAllowedTag') as HTMLButtonElement).addEventListener('click', function () {
+            showAllowedTagPopup();
+        });
+
+        (page.querySelector('#btnAddBlockedTag') as HTMLButtonElement).addEventListener('click', function () {
+            showBlockedTagPopup();
+        });
+
+        (page.querySelector('.userParentalControlForm') as HTMLFormElement).addEventListener('submit', onSubmit);
+    }, [loadAllowedTags, loadBlockedTags, loadData, renderAccessSchedule]);
 
     const optionMaxParentalRating = () => {
         let content = '';
@@ -337,21 +395,6 @@ const UserParentalControl = () => {
         }
         return content;
     };
-
-    const removeAllowedTagsCallback = useCallback((tag: string) => {
-        const newTags = allowedTags.filter(t => t !== tag);
-        setAllowedTags(newTags);
-    }, [allowedTags, setAllowedTags]);
-
-    const removeBlockedTagsTagsCallback = useCallback((tag: string) => {
-        const newTags = blockedTags.filter(t => t !== tag);
-        setBlockedTags(newTags);
-    }, [blockedTags, setBlockedTags]);
-
-    const removeScheduleCallback = useCallback((index: number) => {
-        const newSchedules = accessSchedules.filter((_e, i) => i != index);
-        setAccessSchedules(newSchedules);
-    }, [accessSchedules, setAccessSchedules]);
 
     return (
         <Page
@@ -417,7 +460,6 @@ const UserParentalControl = () => {
                                     key={tag}
                                     tag={tag}
                                     tagType='allowedTag'
-                                    removeTagCallback={removeAllowedTagsCallback}
                                 />;
                             })}
                         </div>
@@ -442,7 +484,6 @@ const UserParentalControl = () => {
                                     key={tag}
                                     tag={tag}
                                     tagType='blockedTag'
-                                    removeTagCallback={removeBlockedTagsTagsCallback}
                                 />;
                             })}
                         </div>
@@ -461,12 +502,11 @@ const UserParentalControl = () => {
                         <div className='accessScheduleList paperList'>
                             {accessSchedules.map((accessSchedule, index) => {
                                 return <AccessScheduleList
-                                    key={`${accessSchedule.DayOfWeek}${accessSchedule.StartHour}${accessSchedule.EndHour}`}
+                                    key={accessSchedule.Id}
                                     index={index}
                                     DayOfWeek={accessSchedule.DayOfWeek}
                                     StartHour={accessSchedule.StartHour}
                                     EndHour={accessSchedule.EndHour}
-                                    removeScheduleCallback={removeScheduleCallback}
                                 />;
                             })}
                         </div>

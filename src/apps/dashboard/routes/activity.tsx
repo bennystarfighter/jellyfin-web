@@ -1,35 +1,35 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
+import { getActivityLogApi } from '@jellyfin/sdk/lib/utils/api/activity-log-api';
+import { getUserApi } from '@jellyfin/sdk/lib/utils/api/user-api';
 import type { ActivityLogEntry } from '@jellyfin/sdk/lib/generated-client/models/activity-log-entry';
-import { LogLevel } from '@jellyfin/sdk/lib/generated-client/models/log-level';
 import type { UserDto } from '@jellyfin/sdk/lib/generated-client/models/user-dto';
+import PermMedia from '@mui/icons-material/PermMedia';
 import Box from '@mui/material/Box';
+import IconButton from '@mui/material/IconButton';
 import ToggleButton from '@mui/material/ToggleButton';
 import ToggleButtonGroup from '@mui/material/ToggleButtonGroup';
 import Typography from '@mui/material/Typography';
-import { type MRT_ColumnDef, MaterialReactTable, useMaterialReactTable } from 'material-react-table';
-import { useSearchParams } from 'react-router-dom';
+import { DataGrid, type GridColDef } from '@mui/x-data-grid';
+import { Link, useSearchParams } from 'react-router-dom';
 
-import { useLogEntires } from 'apps/dashboard/features/activity/api/useLogEntries';
-import ActionsCell from 'apps/dashboard/features/activity/components/ActionsCell';
-import LogLevelCell from 'apps/dashboard/features/activity/components/LogLevelCell';
-import OverviewCell from 'apps/dashboard/features/activity/components/OverviewCell';
-import UserAvatarButton from 'apps/dashboard/features/activity/components/UserAvatarButton';
-import type { ActivityLogEntryCell } from 'apps/dashboard/features/activity/types/ActivityLogEntryCell';
 import Page from 'components/Page';
-import { useUsers } from 'hooks/useUsers';
-import { parseISO8601Date, toLocaleString } from 'scripts/datetime';
-import globalize from 'lib/globalize';
+import UserAvatar from 'components/UserAvatar';
+import { useApi } from 'hooks/useApi';
+import { parseISO8601Date, toLocaleDateString, toLocaleTimeString } from 'scripts/datetime';
+import globalize from 'scripts/globalize';
 import { toBoolean } from 'utils/string';
 
-type UsersRecords = Record<string, UserDto>;
+import LogLevelChip from '../components/activityTable/LogLevelChip';
+import OverviewCell from '../components/activityTable/OverviewCell';
+import GridActionsCellLink from '../components/dataGrid/GridActionsCellLink';
 
 const DEFAULT_PAGE_SIZE = 25;
 const VIEW_PARAM = 'useractivity';
 
 const enum ActivityView {
-    All = 'All',
-    User = 'User',
-    System = 'System'
+    All,
+    User,
+    System
 }
 
 const getActivityView = (param: string | null) => {
@@ -38,131 +38,172 @@ const getActivityView = (param: string | null) => {
     return ActivityView.System;
 };
 
-const getUserCell = (users: UsersRecords) => function UserCell({ row }: ActivityLogEntryCell) {
-    return (
-        <UserAvatarButton user={row.original.UserId && users[row.original.UserId] || undefined} />
-    );
-};
+const getRowId = (row: ActivityLogEntry) => row.Id ?? -1;
 
 const Activity = () => {
+    const { api } = useApi();
     const [ searchParams, setSearchParams ] = useSearchParams();
 
     const [ activityView, setActivityView ] = useState(
         getActivityView(searchParams.get(VIEW_PARAM)));
-
-    const [ pagination, setPagination ] = useState({
-        pageIndex: 0,
+    const [ isLoading, setIsLoading ] = useState(true);
+    const [ paginationModel, setPaginationModel ] = useState({
+        page: 0,
         pageSize: DEFAULT_PAGE_SIZE
     });
+    const [ rowCount, setRowCount ] = useState(0);
+    const [ rows, setRows ] = useState<ActivityLogEntry[]>([]);
+    const [ users, setUsers ] = useState<Record<string, UserDto>>({});
 
-    const { data: usersData, isLoading: isUsersLoading } = useUsers();
-
-    const users: UsersRecords = useMemo(() => {
-        if (!usersData) return {};
-
-        return usersData.reduce<UsersRecords>((acc, user) => {
-            const userId = user.Id;
-            if (!userId) return acc;
-
-            return {
-                ...acc,
-                [userId]: user
-            };
-        }, {});
-    }, [ usersData ]);
-
-    const userNames = useMemo(() => {
-        const names: string[] = [];
-        usersData?.forEach(user => {
-            if (user.Name) names.push(user.Name);
-        });
-        return names;
-    }, [ usersData ]);
-
-    const UserCell = getUserCell(users);
-
-    const activityParams = useMemo(() => ({
-        startIndex: pagination.pageIndex * pagination.pageSize,
-        limit: pagination.pageSize,
-        hasUserId: activityView !== ActivityView.All ? activityView === ActivityView.User : undefined
-    }), [activityView, pagination.pageIndex, pagination.pageSize]);
-
-    const { data: logEntries, isLoading: isLogEntriesLoading } = useLogEntires(activityParams);
-
-    const isLoading = isUsersLoading || isLogEntriesLoading;
-
-    const userColumn: MRT_ColumnDef<ActivityLogEntry>[] = useMemo(() =>
-        (activityView === ActivityView.System) ? [] : [{
-            id: 'User',
-            accessorFn: row => row.UserId && users[row.UserId]?.Name,
-            header: globalize.translate('LabelUser'),
-            size: 75,
-            Cell: UserCell,
-            enableResizing: false,
-            muiTableBodyCellProps: {
-                align: 'center'
-            },
-            filterVariant: 'multi-select',
-            filterSelectOptions: userNames
-        }], [ activityView, userNames, users, UserCell ]);
-
-    const columns = useMemo<MRT_ColumnDef<ActivityLogEntry>[]>(() => [
+    const userColDef: GridColDef[] = activityView !== ActivityView.System ? [
         {
-            id: 'Date',
-            accessorFn: row => parseISO8601Date(row.Date),
-            header: globalize.translate('LabelTime'),
-            size: 160,
-            Cell: ({ cell }) => toLocaleString(cell.getValue<Date>()),
-            filterVariant: 'datetime-range'
-        },
-        {
-            accessorKey: 'Severity',
-            header: globalize.translate('LabelLevel'),
-            size: 90,
-            Cell: LogLevelCell,
-            enableResizing: false,
-            muiTableBodyCellProps: {
-                align: 'center'
-            },
-            filterVariant: 'multi-select',
-            filterSelectOptions: Object.values(LogLevel).map(level => globalize.translate(`LogLevel.${level}`))
-        },
-        ...userColumn,
-        {
-            accessorKey: 'Name',
-            header: globalize.translate('LabelName'),
-            size: 270
-        },
-        {
-            id: 'Overview',
-            accessorFn: row => row.ShortOverview || row.Overview,
-            header: globalize.translate('LabelOverview'),
-            size: 170,
-            Cell: OverviewCell
-        },
-        {
-            accessorKey: 'Type',
-            header: globalize.translate('LabelType'),
-            size: 150
-        },
-        {
-            id: 'Actions',
-            accessorFn: row => row.ItemId,
-            header: '',
-            size: 60,
-            Cell: ActionsCell,
-            enableColumnActions: false,
-            enableColumnFilter: false,
-            enableResizing: false,
-            enableSorting: false
+            field: 'User',
+            headerName: globalize.translate('LabelUser'),
+            width: 60,
+            valueGetter: ({ row }) => users[row.UserId]?.Name,
+            renderCell: ({ row }) => (
+                <IconButton
+                    size='large'
+                    color='inherit'
+                    sx={{ padding: 0 }}
+                    title={users[row.UserId]?.Name ?? undefined}
+                    component={Link}
+                    to={`/dashboard/users/profile?userId=${row.UserId}`}
+                >
+                    <UserAvatar user={users[row.UserId]} />
+                </IconButton>
+            )
         }
-    ], [ userColumn ]);
+    ] : [];
 
-    const onViewChange = useCallback((_e: React.MouseEvent<HTMLElement, MouseEvent>, newView: ActivityView | null) => {
+    const columns: GridColDef[] = [
+        {
+            field: 'Date',
+            headerName: globalize.translate('LabelDate'),
+            width: 90,
+            type: 'date',
+            valueGetter: ({ value }) => parseISO8601Date(value),
+            valueFormatter: ({ value }) => toLocaleDateString(value)
+        },
+        {
+            field: 'Time',
+            headerName: globalize.translate('LabelTime'),
+            width: 100,
+            type: 'dateTime',
+            valueGetter: ({ row }) => parseISO8601Date(row.Date),
+            valueFormatter: ({ value }) => toLocaleTimeString(value)
+        },
+        {
+            field: 'Severity',
+            headerName: globalize.translate('LabelLevel'),
+            width: 110,
+            renderCell: ({ value }) => (
+                value ? (
+                    <LogLevelChip level={value} />
+                ) : undefined
+            )
+        },
+        ...userColDef,
+        {
+            field: 'Name',
+            headerName: globalize.translate('LabelName'),
+            width: 300
+        },
+        {
+            field: 'Overview',
+            headerName: globalize.translate('LabelOverview'),
+            width: 200,
+            valueGetter: ({ row }) => row.ShortOverview ?? row.Overview,
+            renderCell: ({ row }) => (
+                <OverviewCell {...row} />
+            )
+        },
+        {
+            field: 'Type',
+            headerName: globalize.translate('LabelType'),
+            width: 180
+        },
+        {
+            field: 'actions',
+            type: 'actions',
+            width: 50,
+            getActions: ({ row }) => {
+                const actions = [];
+
+                if (row.ItemId) {
+                    actions.push(
+                        <GridActionsCellLink
+                            size='large'
+                            icon={<PermMedia />}
+                            label={globalize.translate('LabelMediaDetails')}
+                            title={globalize.translate('LabelMediaDetails')}
+                            to={`/details?id=${row.ItemId}`}
+                        />
+                    );
+                }
+
+                return actions;
+            }
+        }
+    ];
+
+    const onViewChange = useCallback((_e, newView: ActivityView | null) => {
         if (newView !== null) {
             setActivityView(newView);
         }
     }, []);
+
+    useEffect(() => {
+        if (api) {
+            const fetchUsers = async () => {
+                const { data } = await getUserApi(api).getUsers();
+                const usersById: Record<string, UserDto> = {};
+                data.forEach(user => {
+                    if (user.Id) {
+                        usersById[user.Id] = user;
+                    }
+                });
+
+                setUsers(usersById);
+            };
+
+            fetchUsers()
+                .catch(err => {
+                    console.error('[activity] failed to fetch users', err);
+                });
+        }
+    }, [ api ]);
+
+    useEffect(() => {
+        if (api) {
+            const fetchActivity = async () => {
+                const params: {
+                    startIndex: number,
+                    limit: number,
+                    hasUserId?: boolean
+                } = {
+                    startIndex: paginationModel.page * paginationModel.pageSize,
+                    limit: paginationModel.pageSize
+                };
+                if (activityView !== ActivityView.All) {
+                    params.hasUserId = activityView === ActivityView.User;
+                }
+
+                const { data } = await getActivityLogApi(api)
+                    .getLogEntries(params);
+
+                setRowCount(data.TotalRecordCount ?? 0);
+                setRows(data.Items ?? []);
+                setIsLoading(false);
+            };
+
+            setIsLoading(true);
+            fetchActivity()
+                .catch(err => {
+                    console.error('[activity] failed to fetch activity log entries', err);
+                });
+        }
+    }, [ activityView, api, paginationModel ]);
 
     useEffect(() => {
         const currentViewParam = getActivityView(searchParams.get(VIEW_PARAM));
@@ -176,83 +217,56 @@ const Activity = () => {
         }
     }, [ activityView, searchParams, setSearchParams ]);
 
-    const table = useMaterialReactTable({
-        columns,
-        data: logEntries?.Items || [],
-
-        // Enable custom features
-        enableColumnPinning: true,
-        enableColumnResizing: true,
-
-        // Sticky header/footer
-        enableStickyFooter: true,
-        enableStickyHeader: true,
-        muiTableContainerProps: {
-            sx: {
-                maxHeight: 'calc(100% - 7rem)' // 2 x 3.5rem for header and footer
-            }
-        },
-
-        // State
-        initialState: {
-            density: 'compact'
-        },
-        state: {
-            isLoading,
-            pagination
-        },
-
-        // Server pagination
-        manualPagination: true,
-        onPaginationChange: setPagination,
-        rowCount: logEntries?.TotalRecordCount || 0,
-
-        // Custom toolbar contents
-        renderTopToolbarCustomActions: () => (
-            <ToggleButtonGroup
-                size='small'
-                value={activityView}
-                onChange={onViewChange}
-                exclusive
-            >
-                <ToggleButton value={ActivityView.All}>
-                    {globalize.translate('All')}
-                </ToggleButton>
-                <ToggleButton value={ActivityView.User}>
-                    {globalize.translate('LabelUser')}
-                </ToggleButton>
-                <ToggleButton value={ActivityView.System}>
-                    {globalize.translate('LabelSystem')}
-                </ToggleButton>
-            </ToggleButtonGroup>
-        )
-    });
-
     return (
         <Page
             id='serverActivityPage'
             title={globalize.translate('HeaderActivity')}
             className='mainAnimatedPage type-interior'
         >
-            <Box
-                className='content-primary'
-                sx={{
-                    display: 'flex',
-                    flexDirection: 'column',
-                    height: '100%'
-                }}
-            >
+            <div className='content-primary'>
                 <Box
                     sx={{
-                        marginBottom: 1
+                        display: 'flex',
+                        alignItems: 'baseline',
+                        marginY: 2
                     }}
                 >
-                    <Typography variant='h2'>
-                        {globalize.translate('HeaderActivity')}
-                    </Typography>
+                    <Box sx={{ flexGrow: 1 }}>
+                        <Typography variant='h2'>
+                            {globalize.translate('HeaderActivity')}
+                        </Typography>
+                    </Box>
+                    <ToggleButtonGroup
+                        value={activityView}
+                        onChange={onViewChange}
+                        exclusive
+                    >
+                        <ToggleButton value={ActivityView.All}>
+                            {globalize.translate('All')}
+                        </ToggleButton>
+                        <ToggleButton value={ActivityView.User}>
+                            {globalize.translate('LabelUser')}
+                        </ToggleButton>
+                        <ToggleButton value={ActivityView.System}>
+                            {globalize.translate('LabelSystem')}
+                        </ToggleButton>
+                    </ToggleButtonGroup>
                 </Box>
-                <MaterialReactTable table={table} />
-            </Box>
+                <DataGrid
+                    columns={columns}
+                    rows={rows}
+                    pageSizeOptions={[ 10, 25, 50, 100 ]}
+                    paginationMode='server'
+                    paginationModel={paginationModel}
+                    onPaginationModelChange={setPaginationModel}
+                    rowCount={rowCount}
+                    getRowId={getRowId}
+                    loading={isLoading}
+                    sx={{
+                        minHeight: 500
+                    }}
+                />
+            </div>
         </Page>
     );
 };

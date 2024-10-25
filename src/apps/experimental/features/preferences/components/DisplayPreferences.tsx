@@ -13,10 +13,10 @@ import React, { Fragment } from 'react';
 import { appHost } from 'components/apphost';
 import { useApi } from 'hooks/useApi';
 import { useThemes } from 'hooks/useThemes';
-import globalize from 'lib/globalize';
+import globalize from 'scripts/globalize';
 
-import { useScreensavers } from '../hooks/useScreensavers';
-import type { DisplaySettingsValues } from '../types/displaySettingsValues';
+import { DisplaySettingsValues } from './types';
+import { useScreensavers } from './hooks/useScreensavers';
 
 interface DisplayPreferencesProps {
     onChange: (event: SelectChangeEvent | React.SyntheticEvent) => void;

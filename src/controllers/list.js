@@ -1,4 +1,4 @@
-import globalize from '../lib/globalize';
+import globalize from '../scripts/globalize';
 import listView from '../components/listview/listview';
 import * as userSettings from '../scripts/settings/userSettings';
 import focusManager from '../components/focusManager';
@@ -284,8 +284,7 @@ function getItems(instance, params, item, sortBy, startIndex, limit) {
             Recursive: true,
             IsFavorite: params.IsFavorite === 'true' || null,
             ArtistIds: params.artistId || null,
-            SortBy: sortBy,
-            Tags: params.tag || null
+            SortBy: sortBy
         }));
     }
 
@@ -334,7 +333,7 @@ function getItems(instance, params, item, sortBy, startIndex, limit) {
 }
 
 function getItem(params) {
-    if ([ 'Recordings', 'Programs', 'nextup', 'tag' ].includes(params.type)) {
+    if (params.type === 'Recordings' || params.type === 'Programs' || params.type === 'nextup') {
         return Promise.resolve(null);
     }
 
@@ -727,10 +726,6 @@ class ItemsView {
             if (params.type === 'Video') {
                 return globalize.translate('Videos');
             }
-
-            if (params.tag) {
-                return params.tag;
-            }
         }
 
         function play() {
@@ -856,7 +851,7 @@ class ItemsView {
             setTitle(null);
             getItem(params).then(function (item) {
                 setTitle(item);
-                if (item && item.Type == 'Genre') {
+                if (item.Type == 'Genre') {
                     item.ParentId = params.parentId;
                 }
 
@@ -1212,7 +1207,7 @@ class ItemsView {
             showTitle = true;
         } else if (showTitle === 'false') {
             showTitle = false;
-        } else if ([ 'Audio', 'MusicAlbum', 'MusicArtist', 'Person', 'Programs', 'Recordings', 'nextup', 'tag' ].includes(params.type)) {
+        } else if (params.type === 'Programs' || params.type === 'Recordings' || params.type === 'Person' || params.type === 'nextup' || params.type === 'Audio' || params.type === 'MusicAlbum' || params.type === 'MusicArtist') {
             showTitle = true;
         } else if (item && item.Type !== 'PhotoAlbum') {
             showTitle = true;
@@ -1229,7 +1224,7 @@ class ItemsView {
         }
 
         return {
-            showTitle,
+            showTitle: showTitle,
             showYear: userSettings.get(basekey + '-showYear') !== 'false',
             imageType: imageType || 'primary',
             viewType: userSettings.get(basekey + '-viewType') || 'images'

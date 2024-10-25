@@ -38,6 +38,9 @@ class ServerConnections extends ConnectionManager {
         // Set the apiclient minimum version to match the SDK
         this._minServerVersion = MINIMUM_VERSION;
 
+        // Set the apiclient minimum version to match the SDK
+        this._minServerVersion = MINIMUM_VERSION;
+
         Events.on(this, 'localusersignedout', (_e, logoutInfo) => {
             setUserInfo(null, null);
             // Ensure the updated credentials are persisted to storage

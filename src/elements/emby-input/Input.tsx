@@ -1,21 +1,11 @@
 import classNames from 'classnames';
-import React, {
-    type DetailedHTMLProps,
-    type InputHTMLAttributes,
-    useState,
-    useCallback,
-    forwardRef
-} from 'react';
+import React, { type DetailedHTMLProps, type InputHTMLAttributes, useState, useCallback, forwardRef } from 'react';
 
 import './emby-input.scss';
 
-interface InputProps
-    extends DetailedHTMLProps<
-        InputHTMLAttributes<HTMLInputElement>,
-        HTMLInputElement
-    > {
-    id: string;
-    label?: string;
+interface InputProps extends DetailedHTMLProps<InputHTMLAttributes<HTMLInputElement>, HTMLInputElement> {
+    id: string,
+    label?: string
 }
 
 const Input = forwardRef<HTMLInputElement, InputProps>(
@@ -23,7 +13,7 @@ const Input = forwardRef<HTMLInputElement, InputProps>(
         const [isFocused, setIsFocused] = useState(false);
 
         const onBlurInternal = useCallback(
-            (e: React.FocusEvent<HTMLInputElement, Element>) => {
+            (e) => {
                 setIsFocused(false);
                 onBlur?.(e);
             },
@@ -31,7 +21,7 @@ const Input = forwardRef<HTMLInputElement, InputProps>(
         );
 
         const onFocusInternal = useCallback(
-            (e: React.FocusEvent<HTMLInputElement, Element>) => {
+            (e) => {
                 setIsFocused(true);
                 onFocus?.(e);
             },

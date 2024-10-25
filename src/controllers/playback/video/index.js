@@ -10,7 +10,7 @@ import itemHelper from '../../../components/itemHelper';
 import mediaInfo from '../../../components/mediainfo/mediainfo';
 import focusManager from '../../../components/focusManager';
 import Events from '../../../utils/events.ts';
-import globalize from '../../../lib/globalize';
+import globalize from '../../../scripts/globalize';
 import { appHost } from '../../../components/apphost';
 import layoutManager from '../../../components/layoutManager';
 import * as userSettings from '../../../scripts/settings/userSettings';
@@ -95,6 +95,18 @@ export default function (view) {
         }
 
         setTitle(displayItem, parentName);
+        ratingsText.innerHTML = mediaInfo.getPrimaryMediaInfoHtml(displayItem, {
+            officialRating: false,
+            criticRating: true,
+            starRating: true,
+            endsAt: false,
+            year: false,
+            programIndicator: false,
+            runtime: false,
+            subtitles: false,
+            originalAirDate: false,
+            episodeTitle: false
+        });
 
         const secondaryMediaInfo = view.querySelector('.osdSecondaryMediaInfo');
         const secondaryMediaInfoHtml = mediaInfo.getSecondaryMediaInfoHtml(displayItem, {
@@ -248,9 +260,7 @@ export default function (view) {
 
         // Display the item with its premiere date if it has one
         let title = itemName;
-        if (item.Type == 'Movie' && item.ProductionYear) {
-            title += ` (${datetime.toLocaleString(item.ProductionYear, { useGrouping: false })})`;
-        } else if (item.PremiereDate) {
+        if (item.PremiereDate) {
             try {
                 const year = datetime.toLocaleString(datetime.parseISO8601Date(item.PremiereDate).getFullYear(), { useGrouping: false });
                 title += ` (${year})`;
@@ -886,21 +896,13 @@ export default function (view) {
         }
     }
 
-    async function updatePlaylist() {
-        try {
-            const playlist = await playbackManager.getPlaylist();
-
-            if (playlist && playlist.length > 1) {
-                const btnPreviousTrack = view.querySelector('.btnPreviousTrack');
-                const btnNextTrack = view.querySelector('.btnNextTrack');
-                btnPreviousTrack.classList.remove('hide');
-                btnNextTrack.classList.remove('hide');
-                btnPreviousTrack.disabled = false;
-                btnNextTrack.disabled = false;
-            }
-        } catch (err) {
-            console.error('[VideoPlayer] failed to get playlist', err);
-        }
+    function updatePlaylist() {
+        const btnPreviousTrack = view.querySelector('.btnPreviousTrack');
+        const btnNextTrack = view.querySelector('.btnNextTrack');
+        btnPreviousTrack.classList.remove('hide');
+        btnNextTrack.classList.remove('hide');
+        btnNextTrack.disabled = false;
+        btnPreviousTrack.disabled = false;
     }
 
     function updateTimeText(elem, ticks, divider) {
@@ -1191,12 +1193,8 @@ export default function (view) {
     function onKeyDown(e) {
         clickedElement = e.target;
 
-        const isKeyModified = e.ctrlKey || e.altKey || e.metaKey;
-
-        // Skip modified keys
-        if (isKeyModified) return;
-
         const key = keyboardnavigation.getKeyName(e);
+        const isKeyModified = e.ctrlKey || e.altKey || e.metaKey;
 
         const btnPlayPause = osdBottomElement.querySelector('.btnPause');
 
@@ -1219,10 +1217,8 @@ export default function (view) {
             switch (key) {
                 case 'ArrowLeft':
                 case 'ArrowRight':
-                    if (!e.shiftKey) {
-                        showOsd(nowPlayingPositionSlider);
-                        nowPlayingPositionSlider.dispatchEvent(new KeyboardEvent(e.type, e));
-                    }
+                    showOsd(nowPlayingPositionSlider);
+                    nowPlayingPositionSlider.dispatchEvent(new KeyboardEvent(e.type, e));
                     return;
                 case 'Enter':
                     playbackManager.playPause(currentPlayer);
@@ -1232,7 +1228,7 @@ export default function (view) {
         }
 
         if (layoutManager.tv && keyboardnavigation.isNavigationKey(key)) {
-            if (!e.shiftKey) showOsd();
+            showOsd();
             return;
         }
 
@@ -1250,71 +1246,50 @@ export default function (view) {
                 break;
             case 'k':
             case 'K':
-                if (!e.shiftKey) {
-                    e.preventDefault();
-                    playbackManager.playPause(currentPlayer);
-                    showOsd(btnPlayPause);
-                }
+                playbackManager.playPause(currentPlayer);
+                showOsd(btnPlayPause);
                 break;
             case 'ArrowUp':
             case 'Up':
-                if (!e.shiftKey) {
-                    e.preventDefault();
-                    playbackManager.volumeUp(currentPlayer);
-                }
+                playbackManager.volumeUp(currentPlayer);
                 break;
             case 'ArrowDown':
             case 'Down':
-                if (!e.shiftKey) {
-                    e.preventDefault();
-                    playbackManager.volumeDown(currentPlayer);
-                }
+                playbackManager.volumeDown(currentPlayer);
                 break;
             case 'l':
             case 'L':
             case 'ArrowRight':
             case 'Right':
-                if (!e.shiftKey) {
-                    e.preventDefault();
-                    playbackManager.fastForward(currentPlayer);
-                    showOsd(btnFastForward);
-                }
+                playbackManager.fastForward(currentPlayer);
+                showOsd(btnFastForward);
                 break;
             case 'j':
             case 'J':
             case 'ArrowLeft':
             case 'Left':
-                if (!e.shiftKey) {
-                    e.preventDefault();
-                    playbackManager.rewind(currentPlayer);
-                    showOsd(btnRewind);
-                }
+                playbackManager.rewind(currentPlayer);
+                showOsd(btnRewind);
                 break;
             case 'f':
             case 'F':
-                if (!e.shiftKey) {
-                    e.preventDefault();
+                if (!e.ctrlKey && !e.metaKey) {
                     playbackManager.toggleFullscreen(currentPlayer);
                 }
                 break;
             case 'm':
             case 'M':
-                if (!e.shiftKey) {
-                    e.preventDefault();
-                    playbackManager.toggleMute(currentPlayer);
-                }
+                playbackManager.toggleMute(currentPlayer);
                 break;
             case 'p':
             case 'P':
                 if (e.shiftKey) {
-                    e.preventDefault();
                     playbackManager.previousTrack(currentPlayer);
                 }
                 break;
             case 'n':
             case 'N':
                 if (e.shiftKey) {
-                    e.preventDefault();
                     playbackManager.nextTrack(currentPlayer);
                 }
                 break;
@@ -1337,16 +1312,10 @@ export default function (view) {
                 }
                 break;
             case 'Home':
-                if (!e.shiftKey) {
-                    e.preventDefault();
-                    playbackManager.seekPercent(0, currentPlayer);
-                }
+                playbackManager.seekPercent(0, currentPlayer);
                 break;
             case 'End':
-                if (!e.shiftKey) {
-                    e.preventDefault();
-                    playbackManager.seekPercent(100, currentPlayer);
-                }
+                playbackManager.seekPercent(100, currentPlayer);
                 break;
             case '0':
             case '1':
@@ -1357,45 +1326,24 @@ export default function (view) {
             case '6':
             case '7':
             case '8':
-            case '9': { // no Shift
-                e.preventDefault();
-                const percent = parseInt(key, 10) * 10;
-                playbackManager.seekPercent(percent, currentPlayer);
+            case '9': {
+                if (!isKeyModified) {
+                    const percent = parseInt(key, 10) * 10;
+                    playbackManager.seekPercent(percent, currentPlayer);
+                }
                 break;
             }
-            case '>': // Shift+.
-                e.preventDefault();
+            case '>':
                 playbackManager.increasePlaybackRate(currentPlayer);
                 break;
-            case '<': // Shift+,
-                e.preventDefault();
+            case '<':
                 playbackManager.decreasePlaybackRate(currentPlayer);
                 break;
             case 'PageUp':
-                if (!e.shiftKey) {
-                    e.preventDefault();
-                    playbackManager.nextChapter(currentPlayer);
-                }
+                playbackManager.nextChapter(currentPlayer);
                 break;
             case 'PageDown':
-                if (!e.shiftKey) {
-                    e.preventDefault();
-                    playbackManager.previousChapter(currentPlayer);
-                }
-                break;
-            case 'g':
-            case 'G':
-                if (!e.shiftKey) {
-                    e.preventDefault();
-                    subtitleSyncOverlay?.decrementOffset();
-                }
-                break;
-            case 'h':
-            case 'H':
-                if (!e.shiftKey) {
-                    e.preventDefault();
-                    subtitleSyncOverlay?.incrementOffset();
-                }
+                playbackManager.previousChapter(currentPlayer);
                 break;
         }
     }
@@ -1436,13 +1384,11 @@ export default function (view) {
         let chapterThumbContainer = bubble.querySelector('.chapterThumbContainer');
         let chapterThumb;
         let chapterThumbText;
-        let chapterThumbName;
 
         // Create bubble elements if they don't already exist
         if (chapterThumbContainer) {
             chapterThumb = chapterThumbContainer.querySelector('.chapterThumbWrapper');
-            chapterThumbText = chapterThumbContainer.querySelector('h2.chapterThumbText');
-            chapterThumbName = chapterThumbContainer.querySelector('div.chapterThumbText');
+            chapterThumbText = chapterThumbContainer.querySelector('.chapterThumbText');
         } else {
             doFullUpdate = true;
 
@@ -1461,22 +1407,9 @@ export default function (view) {
             chapterThumbTextContainer.classList.add('chapterThumbTextContainer');
             chapterThumbContainer.appendChild(chapterThumbTextContainer);
 
-            chapterThumbName = document.createElement('div');
-            chapterThumbName.classList.add('chapterThumbText', 'chapterThumbText-dim');
-            chapterThumbTextContainer.appendChild(chapterThumbName);
-
             chapterThumbText = document.createElement('h2');
             chapterThumbText.classList.add('chapterThumbText');
             chapterThumbTextContainer.appendChild(chapterThumbText);
-        }
-
-        let chapter;
-        for (const currentChapter of item.Chapters || []) {
-            if (positionTicks < currentChapter.StartPositionTicks) {
-                break;
-            }
-
-            chapter = currentChapter;
         }
 
         // Update trickplay values
@@ -1502,7 +1435,6 @@ export default function (view) {
         chapterThumb.style.backgroundPositionY = offsetY + 'px';
 
         chapterThumbText.textContent = datetime.getDisplayRunningTime(positionTicks);
-        chapterThumbName.textContent = chapter?.Name || '';
 
         // Set bubble innerHTML if container isn't part of DOM
         if (doFullUpdate) {
@@ -1620,6 +1552,7 @@ export default function (view) {
     const startTimeText = view.querySelector('.startTimeText');
     const endTimeText = view.querySelector('.endTimeText');
     const endsAtText = view.querySelector('.endsAtText');
+    const ratingsText = view.querySelector('.osdRatingsText');
     const btnRewind = view.querySelector('.btnRewind');
     const btnFastForward = view.querySelector('.btnFastForward');
     const transitionEndEventName = dom.whichTransitionEvent();
@@ -1834,15 +1767,6 @@ export default function (view) {
             } else {
                 playbackManager.seekPercent(newPercent, player);
             }
-        }
-    });
-
-    nowPlayingPositionSlider.addEventListener('keydown', function (e) {
-        if (e.defaultPrevented) return;
-
-        const key = keyboardnavigation.getKeyName(e);
-        if (key === 'Enter') {
-            playbackManager.playPause(currentPlayer);
         }
     });
 
